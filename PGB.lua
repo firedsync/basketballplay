@@ -1,50 +1,18 @@
--- Matcha Library Initialization
-local Matcha = loadstring(game:HttpGet("https://matcha-latte.gitbook.io/matcha"))() -- Placeholder for library load
-
-local Player = game.LocalPlayer
-if not Player then return end
+-- Handlers and State Management
+local Player = game:GetService("Players").LocalPlayer
 local Character = Player.Character or Player.CharacterAdded:Wait()
 
 local Handlers = {
     Ping = {},
-    Player = {
-        States = {
-            HasBall = false,
-            IsShooting = false,
-            Extended = false
-        }
-    },
-    Input = {
-        States = {
-            Triggered = 0,
-            Pending = false,
-            Cooldown = 0
-        }
-    },
-    Autoblock = {
-        States = {
-            Active = false,
-            Blocked = 0
-        }
-    }
+    Player = { States = { HasBall = false, IsShooting = false, Extended = false } },
+    Input = { States = { Triggered = 0, Pending = false, Cooldown = 0 } },
+    Autoblock = { States = { Active = false, Blocked = 0 } }
 }
 
--- Matcha-specific Ping Reader (Using the provided memory pattern)
+-- Safe Ping Reader (Uses Game Stats)
 Handlers.Ping.Get = function()
-    local Stats = game:GetService("Stats")
-    local Network = Stats:FindFirstChild("Network")
-    local ServerStatsItem = Network and Network:FindFirstChild("ServerStatsItem")
-    local PingObj = ServerStatsItem and ServerStatsItem:FindFirstChild("Data Ping")
-    
-    if not PingObj then return 0 end
-    -- Memory reading logic preserved from your source
-    local raw = memory.Read("string", PingObj.Address + 0xC8)
-    local spacePos = string.find(raw, " ")
-    if spacePos then
-        local Number = tonumber(string.sub(raw, 1, spacePos - 1))
-        return math.floor(Number or 0)
-    end
-    return 0
+    local stats = game:GetService("Stats")
+    return math.floor(stats.Network.ServerStatsItem["Data Ping"]:GetValue())
 end
 
 Handlers.Player.Update = function()
@@ -60,116 +28,68 @@ Handlers.Player.Update = function()
 end
 
 Handlers.Player.Extender = function()
-    local RightHand = Character:FindFirstChild("RightHand")
-    local LeftHand = Character:FindFirstChild("LeftHand")
     local Active = Handlers.Player.States.Extended and not Handlers.Player.States.HasBall
-    
-    if RightHand then
-        RightHand.Size = Active and Vector3.new(3, 15, 3) or Vector3.new(0.69334, 1.10182, 0.744331)
-        RightHand.Transparency = 1
-        RightHand.CanCollide = true
-    end
-    if LeftHand then
-        LeftHand.Size = Active and Vector3.new(3, 15, 3) or Vector3.new(0.69334, 1.10182, 0.744331)
-        LeftHand.Transparency = 1
-        LeftHand.CanCollide = true
+    for _, limb in ipairs({"RightHand", "LeftHand"}) do
+        local part = Character:FindFirstChild(limb)
+        if part then
+            part.Size = Active and Vector3.new(3, 15, 3) or Vector3.new(0.693, 1.101, 0.744)
+            part.Transparency = 1
+            part.CanCollide = true
+        end
     end
 end
 
 Handlers.Input.Release = function()
-    local Time = utility.GetTickCount()
+    local Time = tick() -- Using tick() for universal compatibility
     if not Handlers.Input.States.Pending then
         Handlers.Input.States.Triggered = Time
         Handlers.Input.States.Pending = true
     end
 
     local Ping = Handlers.Ping.Get()
-    local Delay = 370
+    local Delay = 0.37 -- Converted to seconds for tick()
     if Ping > 0 then
-        Delay = math.max(0, Delay - math.floor(Ping * 0.5))
+        Delay = math.max(0, Delay - ((Ping / 1000) * 0.5))
     end
 
     if Handlers.Input.States.Pending and (Time - Handlers.Input.States.Triggered) >= Delay then
-        keyboard.Release("e")
-        keyboard.Release("space")
+        keypress(0x45) -- Key E
+        keypress(0x20) -- Space
+        task.wait(0.05)
+        keyrelease(0x45)
+        keyrelease(0x20)
         Handlers.Input.States.Pending = false
         Handlers.Input.States.Cooldown = Time
     end
 end
 
-Handlers.Input.Update = function()
-    local Time = utility.GetTickCount()
-    if Time - Handlers.Input.States.Cooldown < 500 then return end
-    
-    if Handlers.Player.States.HasBall and Handlers.Player.States.IsShooting then
-        Handlers.Input.Release()
-    else
-        Handlers.Input.States.Pending = false
-    end
-end
+-- UI Initialization (Matcha API)
+-- Note: Ensure 'ui' and 'cheat' globals are provided by your executor/Matcha
+if ui and cheat then
+    ui.NewTab("PGB", "PGB")
+    ui.NewContainer("PGB", "Settings", "Settings", {autosize = true})
+    ui.NewCheckbox("PGB", "Settings", "Autotime")
+    ui.NewCheckbox("PGB", "Settings", "Range Extender")
+    ui.NewCheckbox("PGB", "Settings", "Autoblock")
+    ui.NewInputText("PGB", "Settings", "Keybind", "f")
 
-Handlers.Autoblock.Update = function()
-    local Time = utility.GetTickCount()
-    if Time - Handlers.Autoblock.States.Blocked < 1000 then return end
-    
-    if not Handlers.Player.States.HasBall then
-        local Players = game:GetService("Players")
-        local ClientRoot = Character:FindFirstChild("HumanoidRootPart")
-        if not ClientRoot then return end
-
-        for _, P in ipairs(Players:GetPlayers()) do
-            if P ~= Player and P.Character and P.Character:FindFirstChild("HumanoidRootPart") then
-                local HasBall = P:GetAttribute("HasBall")
-                local Action = P.Character:GetAttribute("Action")
-                local Distance = (ClientRoot.Position - P.Character.HumanoidRootPart.Position).Magnitude
-                
-                if HasBall and (Action == "Shooting" or Action == "Dunking") and Distance <= 15 then
-                    keyboard.Click("lshift", 100)
-                    keyboard.Click("space", 100)
-                    Handlers.Autoblock.States.Blocked = Time
-                    break
-                end
+    cheat.Register("onUpdate", function()
+        if ui.GetValue("PGB", "Settings", "Autotime") then
+            Handlers.Player.Update()
+            if Handlers.Player.States.HasBall and Handlers.Player.States.IsShooting then
+                Handlers.Input.Release()
             end
         end
-    end
-end
-
--- Matcha UI Implementation
-local TabName = "PGB"
-local GroupName = "Settings"
-
-ui.NewTab(TabName, "PGB")
-ui.NewContainer(TabName, GroupName, "Settings", {autosize = true})
-
-ui.NewCheckbox(TabName, GroupName, "Autotime")
-ui.NewCheckbox(TabName, GroupName, "Range Extender")
-ui.NewCheckbox(TabName, GroupName, "Autoblock")
-ui.NewInputText(TabName, GroupName, "Keybind", "f")
-
--- Matcha Callback Hooks
-cheat.Register("onUpdate", function()
-    if ui.GetValue(TabName, GroupName, "Autotime") then
-        Handlers.Player.Update()
-        Handlers.Input.Update()
-    end
-    
-    Handlers.Player.States.Extended = ui.GetValue(TabName, GroupName, "Range Extender")
-    Handlers.Player.Extender()
-    
-    if ui.GetValue(TabName, GroupName, "Autoblock") then
-        local Bind = ui.GetValue(TabName, GroupName, "Keybind")
-        if Bind ~= "" and keyboard.IsPressed(Bind:lower()) then   
-            Handlers.Autoblock.Update()
+        
+        Handlers.Player.States.Extended = ui.GetValue("PGB", "Settings", "Range Extender")
+        Handlers.Player.Extender()
+        
+        if ui.GetValue("PGB", "Settings", "Autoblock") then
+            local Bind = ui.GetValue("PGB", "Settings", "Keybind")
+            -- Checking if key is pressed (Standard Executor function)
+            if isrbxactive() and game:GetService("UserInputService"):IsKeyDown(Enum.KeyCode[Bind:upper()]) then   
+                Handlers.Autoblock.Update()
+            end
         end
-    end
-end)
-
--- Re-init on Place Change
-cheat.Register("onNewPlace", function()
-    Player = game.LocalPlayer
-    Character = Player.Character or Player.CharacterAdded:Wait()
-    
-    -- Reset States
-    Handlers.Input.States.Pending = false
-    Handlers.Autoblock.States.Blocked = 0
-end)
+    end)
+end
